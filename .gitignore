@@ -1,0 +1,11 @@
+# Secrets and personal health data — never commit
+.env
+*.token.json
+tokens/
+certs/
+*.pem
+*.key
+data/
+__pycache__/
+.venv/
+node_modules/
