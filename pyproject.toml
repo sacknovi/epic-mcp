@@ -1,0 +1,20 @@
+[project]
+name = "epic-mcp"
+version = "0.1.0"
+description = "Local MCP server for reading your own MyChart (Epic) medication list via FHIR"
+authors = [
+    { name = "sacknovi", email = "6256395+sacknovi@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=50.0.2",
+    "httpx>=0.28.1",
+    "mcp[cli]>=2.3.0",
+]
+
+[project.scripts]
+epic-mcp = "epic_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"

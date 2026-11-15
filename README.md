@@ -22,6 +22,53 @@ Epic MCP reads nothing else. All access is **read-only**. Epic MCP cannot change
 
 Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE, running as a public client.
 
+## Setup
+
+Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12 or newer. uv installs Python if needed.
+
+```bash
+git clone https://github.com/sacknovi/epic-mcp.git
+cd epic-mcp
+uv sync
+
+# Register with Claude Code
+claude mcp add --scope user epic-mcp -- uv --directory "$PWD" run epic-mcp
+```
+
+Then ask your assistant something like "What medications am I on?" It will give you a MyChart sign-in link the first time.
+
+### Command-line use
+
+```bash
+uv run epic-mcp login     # sign in to MyChart
+uv run epic-mcp meds      # print active medications (--status all for history)
+uv run epic-mcp log       # show the access log
+uv run epic-mcp logout    # delete stored tokens
+```
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `login` / `complete_login` / `login_status` / `logout` | Manage MyChart sign-in |
+| `get_medications` | Medication list. Filter by `active` (default), `all`, `completed`, `stopped`, and so on |
+| `get_patient` | Name and birth date, to confirm whose record it is |
+| `get_access_log` | Every data fetch Epic MCP has made |
+
+### Configuration
+
+By default, Epic MCP connects to Epic's **sandbox**, which has test patients only. To use a real health system, set:
+
+| Variable | Meaning |
+|---|---|
+| `EPIC_FHIR_BASE` | Your health system's FHIR R4 base URL, from Epic's endpoint directory |
+| `EPIC_CLIENT_ID` | The production client ID |
+| `EPIC_MCP_HOME` | Data folder. The default is `~/.epic-mcp` |
+
+All local data lives in `~/.epic-mcp/`: `tokens.json` (mode 600), `access_log.jsonl` and `certs/`. Delete that folder to remove everything.
+
+The first sign-in uses a self-signed certificate for `https://localhost:8765`, so the browser will warn once. To avoid the warning, put [mkcert](https://github.com/FiloSottile/mkcert) certificates at `~/.epic-mcp/certs/localhost.pem` and `localhost-key.pem`.
+
 ## Privacy
 
 - **No central server.** Epic MCP runs entirely on your own computer. The developer receives none of your data.
