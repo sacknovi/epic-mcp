@@ -67,7 +67,7 @@ def patient_id(account: str) -> str:
 def search(account: str, resource: str, params: dict, tool: str, max_pages: int = 10) -> list[dict]:
     """Search and follow `next` links. Returns resources of the requested type only."""
     out: list[dict] = []
-    url, p = f"{config.FHIR_BASE}/{resource}", params
+    url, p = f"{auth.account_base(account)}/{resource}", params
     for _ in range(max_pages):
         bundle = _get(account, url, p, tool, resource)
         for e in bundle.get("entry", []):
@@ -82,4 +82,4 @@ def search(account: str, resource: str, params: dict, tool: str, max_pages: int 
 
 
 def read(account: str, resource: str, rid: str, tool: str) -> dict:
-    return _get(account, f"{config.FHIR_BASE}/{resource}/{rid}", None, tool, resource)
+    return _get(account, f"{auth.account_base(account)}/{resource}/{rid}", None, tool, resource)

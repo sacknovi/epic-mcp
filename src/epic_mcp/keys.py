@@ -28,12 +28,8 @@ def _int_b64(n: int) -> str:
     return _b64url(n.to_bytes((n.bit_length() + 7) // 8, "big"))
 
 
-def has_private_key() -> bool:
-    return config.PRIVATE_KEY.exists()
-
-
-def _load_private_key(path: Path | None = None) -> rsa.RSAPrivateKey:
-    return serialization.load_pem_private_key((path or config.PRIVATE_KEY).read_bytes(), password=None)  # type: ignore[return-value]
+def _load_private_key(path: Path) -> rsa.RSAPrivateKey:
+    return serialization.load_pem_private_key(path.read_bytes(), password=None)  # type: ignore[return-value]
 
 
 def generate_private_key(path: Path, overwrite: bool = False) -> None:
@@ -49,7 +45,7 @@ def generate_private_key(path: Path, overwrite: bool = False) -> None:
         f.write(pem)
 
 
-def public_jwk(path: Path | None = None) -> dict:
+def public_jwk(path: Path) -> dict:
     pub = _load_private_key(path).public_key().public_numbers()
     e, n = _int_b64(pub.e), _int_b64(pub.n)
     # RFC 7638 thumbprint as key id
@@ -57,14 +53,14 @@ def public_jwk(path: Path | None = None) -> dict:
     return {"kty": "RSA", "use": "sig", "alg": config.JWT_ALG, "kid": kid, "e": e, "n": n}
 
 
-def jwks(path: Path | None = None) -> dict:
+def jwks(path: Path) -> dict:
     return {"keys": [public_jwk(path)]}
 
 
-def client_assertion(client_id: str, token_endpoint: str) -> str:
+def client_assertion(client_id: str, token_endpoint: str, key_path: Path) -> str:
     """Signed JWT proving we hold the private key (RFC 7523 / SMART confidential-asymmetric)."""
     now = int(time.time())
-    header = {"alg": config.JWT_ALG, "typ": "JWT", "kid": public_jwk()["kid"]}
+    header = {"alg": config.JWT_ALG, "typ": "JWT", "kid": public_jwk(key_path)["kid"]}
     claims = {
         "iss": client_id,
         "sub": client_id,
@@ -75,5 +71,5 @@ def client_assertion(client_id: str, token_endpoint: str) -> str:
         "exp": now + 240,  # Epic requires exp no more than 5 minutes out
     }
     signing_input = f"{_b64url(json.dumps(header).encode())}.{_b64url(json.dumps(claims).encode())}"
-    sig = _load_private_key().sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA384())
+    sig = _load_private_key(key_path).sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA384())
     return f"{signing_input}.{_b64url(sig)}"

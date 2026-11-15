@@ -1,4 +1,8 @@
-"""SMART on FHIR standalone patient login (PKCE, optional private_key_jwt) with per-account token storage."""
+"""SMART on FHIR standalone patient login (PKCE + private_key_jwt) with per-account token storage.
+
+Each account remembers its own health system (FHIR base URL); the client ID and signing key
+are chosen from that (sandbox -> nonprod, real health systems -> prod).
+"""
 
 from __future__ import annotations
 
@@ -20,8 +24,8 @@ import httpx
 
 from . import config, keys
 
-_smart_config_cache: dict | None = None
-_pending: dict | None = None  # account, state, verifier, server, result for the in-progress login
+_smart_config_cache: dict[str, dict] = {}
+_pending: dict | None = None  # account, fhir_base, health_system, state, verifier, server, result
 _lock = threading.Lock()
 
 
@@ -31,20 +35,31 @@ class AuthError(Exception):
 
 # ---------- SMART discovery ----------
 
-def smart_configuration() -> dict:
-    global _smart_config_cache
-    if _smart_config_cache is None:
-        r = httpx.get(
-            f"{config.FHIR_BASE}/.well-known/smart-configuration",
-            headers={"Accept": "application/json"},
-            timeout=20,
-        )
+def smart_configuration(fhir_base: str) -> dict:
+    base = config.normalize_base(fhir_base)
+    if base not in _smart_config_cache:
+        r = httpx.get(f"{base}/.well-known/smart-configuration", headers={"Accept": "application/json"}, timeout=20)
         r.raise_for_status()
-        _smart_config_cache = r.json()
-    return _smart_config_cache
+        _smart_config_cache[base] = r.json()
+    return _smart_config_cache[base]
+
+
+def account_base(account: str) -> str:
+    acct = config.load_account(account)
+    if not acct:
+        raise AuthError(
+            f"Account '{account}' isn't set up. Use `login` with account='{account}' and its health_system."
+        )
+    return acct["fhir_base"]
 
 
 # ---------- token storage ----------
+
+def _write_json_600(path, data: dict) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+
 
 def load_tokens(account: str) -> dict | None:
     try:
@@ -53,27 +68,23 @@ def load_tokens(account: str) -> dict | None:
         return None
 
 
-def save_tokens(account: str, tok: dict, keep: dict | None = None) -> None:
+def save_tokens(account: str, fhir_base: str, tok: dict, keep: dict | None = None) -> None:
     """Write tokens. `keep` carries fields (e.g. patient_name) from the previous file."""
     config.ensure_account_dir(account)
     tok = dict(tok)
     for k, v in (keep or {}).items():
         tok.setdefault(k, v)
     tok["expires_at"] = time.time() + int(tok.get("expires_in", 3600)) - 60
-    tok["fhir_base"] = config.FHIR_BASE
-    tok["client_id"] = config.CLIENT_ID
-    fd = os.open(config.token_file(account), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(tok, f, indent=2)
+    tok["fhir_base"] = config.normalize_base(fhir_base)
+    tok["client_id"] = config.client_id_for(fhir_base)
+    _write_json_600(config.token_file(account), tok)
 
 
 def update_token_fields(account: str, **fields) -> None:
     tok = load_tokens(account)
     if tok:
         tok.update(fields)
-        fd = os.open(config.token_file(account), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(tok, f, indent=2)
+        _write_json_600(config.token_file(account), tok)
 
 
 def clear_tokens(account: str) -> bool:
@@ -84,12 +95,14 @@ def clear_tokens(account: str) -> bool:
         return False
 
 
-def _token_request(data: dict) -> dict:
-    endpoint = smart_configuration()["token_endpoint"]
-    data = dict(data)
-    if keys.has_private_key():
+def _token_request(fhir_base: str, data: dict) -> dict:
+    endpoint = smart_configuration(fhir_base)["token_endpoint"]
+    client_id = config.client_id_for(fhir_base)
+    key = config.private_key_for(fhir_base)
+    data = dict(data, client_id=client_id)
+    if key.exists():
         data["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-        data["client_assertion"] = keys.client_assertion(config.CLIENT_ID, endpoint)
+        data["client_assertion"] = keys.client_assertion(client_id, endpoint, key)
     r = httpx.post(endpoint, data=data, headers={"Accept": "application/json"}, timeout=30)
     if r.status_code != 200:
         raise AuthError(f"Token request failed ({r.status_code}): {r.text[:500]}")
@@ -110,8 +123,9 @@ def _token_lock(account: str):
 
 def get_valid_token(account: str) -> dict:
     """Return stored tokens, refreshing if possible. Raise AuthError if sign-in is needed."""
+    base = account_base(account)
     tok = load_tokens(account)
-    if not tok or tok.get("fhir_base") != config.FHIR_BASE:
+    if not tok or config.normalize_base(tok.get("fhir_base", "")) != base:
         raise AuthError(f"Account '{account}' is not signed in. Use `login` with account='{account}'.")
     if time.time() < tok.get("expires_at", 0):
         return tok
@@ -122,18 +136,12 @@ def get_valid_token(account: str) -> dict:
         if not tok.get("refresh_token"):
             raise AuthError(f"Session for '{account}' expired. Use `login` with account='{account}'.")
         try:
-            new = _token_request(
-                {
-                    "grant_type": "refresh_token",
-                    "refresh_token": tok["refresh_token"],
-                    "client_id": config.CLIENT_ID,
-                }
-            )
+            new = _token_request(base, {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]})
         except AuthError as e:
-            raise AuthError(f"Could not refresh the session; sign in again with `login`. ({e})") from e
+            raise AuthError(f"Could not refresh '{account}'; sign in again with `login`. ({e})") from e
         # Rolling refresh tokens: Epic returns a new one. Keep the old values only if omitted.
         keep = {k: tok[k] for k in ("patient", "refresh_token", "patient_name") if tok.get(k)}
-        save_tokens(account, new, keep)
+        save_tokens(account, base, new, keep)
         return load_tokens(account)  # type: ignore[return-value]
 
 
@@ -148,11 +156,12 @@ def _ensure_cert() -> tuple[str, str]:
     if cert.exists() and key.exists():
         return str(cert), str(key)
 
+    import ipaddress
+
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.x509.oid import NameOID
-    import ipaddress
 
     pk = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
@@ -175,13 +184,7 @@ def _ensure_cert() -> tuple[str, str]:
     )
     fd = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
-        f.write(
-            pk.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            )
-        )
+        f.write(pk.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     cert.write_bytes(c.public_bytes(serialization.Encoding.PEM))
     return str(cert), str(key)
 
@@ -199,17 +202,19 @@ def _exchange_code(code: str, state: str) -> dict:
         p = _pending
     if not p or state != p["state"]:
         raise AuthError("Login state mismatch or no login in progress. Start the login again.")
+    base, account = p["fhir_base"], p["account"]
     tok = _token_request(
+        base,
         {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": config.REDIRECT_URI,
-            "client_id": config.CLIENT_ID,
             "code_verifier": p["verifier"],
-        }
+        },
     )
-    account = p["account"]
-    save_tokens(account, tok)
+    # Only now commit the account's health system, so a failed login doesn't change it.
+    config.save_account(account, base, p["health_system"])
+    save_tokens(account, base, tok)
     # Record whose chart this is, so every result can be labeled with the patient's name.
     try:
         from . import fhir
@@ -252,11 +257,12 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
-def start_login(account: str) -> str:
-    """Begin a login for `account`: start the local HTTPS callback listener and return the sign-in URL."""
-    account = config.validate_account(account)
+def start_login(account: str, fhir_base: str, health_system: str) -> str:
+    """Begin a login for `account` at `fhir_base`. Starts the local callback listener; returns the sign-in URL."""
     global _pending
-    sc = smart_configuration()
+    account = config.validate_account(account)
+    base = config.normalize_base(fhir_base)
+    sc = smart_configuration(base)
     verifier, challenge = _pkce()
     state = secrets.token_urlsafe(24)
 
@@ -267,7 +273,15 @@ def start_login(account: str) -> str:
                 _pending["server"].server_close()
             except Exception:  # noqa: BLE001
                 pass
-        _pending = {"account": account, "state": state, "verifier": verifier, "server": None, "result": None}
+        _pending = {
+            "account": account,
+            "fhir_base": base,
+            "health_system": health_system,
+            "state": state,
+            "verifier": verifier,
+            "server": None,
+            "result": None,
+        }
 
     try:
         cert, key = _ensure_cert()
@@ -283,11 +297,11 @@ def start_login(account: str) -> str:
 
     params = {
         "response_type": "code",
-        "client_id": config.CLIENT_ID,
+        "client_id": config.client_id_for(base),
         "redirect_uri": config.REDIRECT_URI,
         "scope": config.SCOPES,
         "state": state,
-        "aud": config.FHIR_BASE,
+        "aud": base,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }

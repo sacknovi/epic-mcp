@@ -40,21 +40,23 @@ Then ask your assistant something like "What medications am I on?" It will give 
 
 ### Multiple MyChart accounts
 
-One Epic MCP server can hold several MyChart sign-ins, for example yours and a family member's. Every tool takes an `account` argument (the default is `me`), and every result names the account and the patient. Just ask:
+One Epic MCP server can hold several MyChart sign-ins, for example yours and a family member's, each at its own health system. Every tool takes an `account` argument (the default is `me`), and every result names the account, the patient and the health system. Just ask:
 
-- "Sign in to Mom's MyChart." This calls `login(account="mom")`.
+- "Sign in to Mom's MyChart at OptumCare East." This calls `find_health_system("OptumCare")`, then `login(account="mom", health_system="OptumCare East")`.
 - "Compare my meds with Mom's."
 - "Which accounts are set up?" This calls `list_accounts`.
 
 With MyChart **proxy access**, sign in as yourself and choose the other person at the patient-selection step. That becomes its own account, using your own credentials.
 
-Each account keeps its tokens and access log in `~/.epic-mcp/profiles/<account>/`. The app keys and the localhost certificate are shared. Only one sign-in can be in progress at a time.
+Each account keeps its health system (`account.json`), tokens and access log in `~/.epic-mcp/profiles/<account>/`. Health systems are looked up in [Epic's public endpoint directory](https://open.epic.com/Endpoints/R4). Epic's sandbox uses the sandbox client ID and the nonprod key; every real health system uses the production client ID and the prod key. The app keys and the localhost certificate are shared. Only one sign-in can be in progress at a time.
 
 ### Command-line use
 
 ```bash
-uv run epic-mcp login             # sign in to MyChart (account "me")
-uv run epic-mcp -a mom login      # sign in a second account
+uv run epic-mcp find optum                          # look up a health system
+uv run epic-mcp login -s "OptumCare East"           # sign in (account "me")
+uv run epic-mcp -a mom login -s "Some Health System"  # add a second account
+uv run epic-mcp -a mom login                        # sign in again (uses the saved health system)
 uv run epic-mcp accounts          # list accounts and sign-in status
 uv run epic-mcp -a mom meds       # print active medications (--status all for history)
 uv run epic-mcp -a mom log        # show that account's access log
@@ -65,7 +67,8 @@ uv run epic-mcp -a mom logout     # delete that account's tokens
 
 | Tool | What it does |
 |---|---|
-| `list_accounts` | Accounts, whose record each is, and sign-in status |
+| `list_accounts` | Accounts, with health system, whose record each is, and sign-in status |
+| `find_health_system` | Search Epic's directory for a health system by name |
 | `login` / `complete_login` / `login_status` / `logout` | Manage MyChart sign-in per account |
 | `get_medications` | Medication list. Filter by `active` (default), `all`, `completed`, `stopped`, and so on |
 | `get_patient` | Name and birth date, to confirm whose record it is |
@@ -77,14 +80,11 @@ If you register your own Epic app, run `uv run epic-mcp keygen --env nonprod` an
 
 ### Configuration
 
-By default, Epic MCP connects to Epic's **sandbox**, which has test patients only. To use a real health system, set:
-
 | Variable | Meaning |
 |---|---|
-| `EPIC_FHIR_BASE` | Your health system's FHIR R4 base URL, from Epic's endpoint directory |
-| `EPIC_CLIENT_ID` | The production client ID |
 | `EPIC_MCP_ACCOUNT` | Default account name. The default is `me` |
 | `EPIC_MCP_BASE` | Base folder for keys, the certificate and profiles. The default is `~/.epic-mcp` |
+| `EPIC_CALLBACK_PORT` | Local sign-in callback port. The default is `8765`, and it must match a registered redirect URI |
 
 All local data lives in `~/.epic-mcp/`: `jwt-private-key-nonprod.pem` and `jwt-private-key-prod.pem` (mode 600), `certs/`, and `profiles/<account>/` with each account's `tokens.json` (mode 600) and `access_log.jsonl`. Delete that folder to remove everything.
 

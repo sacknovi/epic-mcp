@@ -9,13 +9,16 @@ from typing import Literal
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
-from . import auth, config, fhir
+from . import auth, config, directory, fhir
 
 mcp = MCPServer(
     name="epic-mcp",
     instructions=(
         "Reads medication lists from one or more MyChart (Epic) accounts via FHIR. Read-only. "
-        "Each account (e.g. 'me', 'mom') is a separate sign-in with its own data; every tool takes "
+        "Each account (e.g. 'me', 'mom') is a separate sign-in, possibly at a different health "
+        "system, with its own data. To add an account, find its health system with "
+        "`find_health_system`, then call `login` with the account name and that health system. "
+        "Every tool takes "
         "an `account` argument and every result names the account and patient. Call "
         "`list_accounts` to see them. Never mix up accounts: when the user asks about a person, use "
         "that person's account, and state whose data you are showing. If an account is not signed "
@@ -117,16 +120,18 @@ ACCOUNT_DOC = "Account name, e.g. 'me' or 'mom' (letters, digits, '-', '_')."
 
 def _label(account: str) -> dict:
     tok = auth.load_tokens(account) or {}
-    return {"account": account, "patient_name": tok.get("patient_name")}
+    acct = config.load_account(account) or {}
+    return {"account": account, "patient_name": tok.get("patient_name"), "health_system": acct.get("health_system")}
 
 
 def _account_status(account: str) -> dict:
+    acct = config.load_account(account)
+    out: dict = {"account": account, "health_system": acct.get("health_system") if acct else None}
     tok = auth.load_tokens(account)
-    if not tok or tok.get("fhir_base") != config.FHIR_BASE:
-        return {"account": account, "signed_in": False}
+    if not acct or not tok or config.normalize_base(tok.get("fhir_base", "")) != acct["fhir_base"]:
+        return out | {"signed_in": False}
     remaining = int(tok.get("expires_at", 0) - time.time())
-    return {
-        "account": account,
+    return out | {
         "patient_name": tok.get("patient_name"),
         "signed_in": remaining > 0 or bool(tok.get("refresh_token")),
         "access_expires_in_seconds": max(remaining, 0),
@@ -136,27 +141,46 @@ def _account_status(account: str) -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def list_accounts() -> dict:
-    """List the MyChart accounts set up in Epic MCP, whose record each is, and whether it's signed in."""
-    names = config.list_account_names()
+    """List the MyChart accounts set up in Epic MCP: health system, whose record, and sign-in status."""
     return {
-        "health_system": config.FHIR_BASE,
         "default_account": config.DEFAULT_ACCOUNT,
-        "accounts": [_account_status(a) for a in names],
-        "hint": "Add an account by calling `login` with a new account name.",
+        "accounts": [_account_status(a) for a in config.list_account_names()],
+        "hint": "Add an account by calling `login` with a new account name and its health_system.",
     }
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+def find_health_system(query: str) -> dict:
+    """Search Epic's public directory for a health system's MyChart/FHIR endpoint by name (e.g. 'Optum')."""
+    hits = directory.search(query)
+    return {"query": query, "matches": hits, "count": len(hits)}
 
 
 # ---------- auth tools ----------
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
-def login(account: AccountArg = config.DEFAULT_ACCOUNT) -> dict:
-    """Start MyChart sign-in for an account (creates it if new). Returns a link the user must open.
+def login(account: AccountArg = config.DEFAULT_ACCOUNT, health_system: str | None = None) -> dict:
+    """Start MyChart sign-in for an account. Returns a link the user must open.
 
-    Use a new account name (e.g. 'mom') to add another person. With MyChart proxy access, the user
-    can sign in as themselves and pick the other person at the patient-selection step.
+    account: e.g. 'me' or 'mom'. A new name creates a new account.
+    health_system: the health system's exact name from `find_health_system` (or its FHIR base URL,
+    or 'sandbox' for Epic's test system). Required for a new account; optional to re-sign-in an
+    existing one (its saved health system is used).
+
+    With MyChart proxy access, the user can sign in as themselves and pick the other person at the
+    patient-selection step.
     """
     account = config.validate_account(account)
-    url = auth.start_login(account)
+    if health_system:
+        base, hs_name = directory.resolve(health_system)
+    else:
+        acct = config.load_account(account)
+        if not acct:
+            raise ValueError(
+                f"'{account}' is a new account: pass health_system (use `find_health_system` to look it up)."
+            )
+        base, hs_name = acct["fhir_base"], acct["health_system"]
+    url = auth.start_login(account, base, hs_name)
     opened = False
     try:
         opened = webbrowser.open(url)
@@ -164,14 +188,14 @@ def login(account: AccountArg = config.DEFAULT_ACCOUNT) -> dict:
         pass
     return {
         "account": account,
+        "health_system": hs_name,
         "sign_in_url": url,
         "browser_opened": opened,
-        "health_system": config.FHIR_BASE,
         "next_steps": (
-            f"Open the link and sign in to the MyChart for account '{account}' (or pick that person "
-            f"if using proxy access). The browser will be sent to {config.REDIRECT_URI}; if it warns "
-            "about the certificate, continue (it's this computer). Then call `login_status`. If the "
-            "final page doesn't load, copy the full address from the browser bar and pass it to "
+            f"Open the link and sign in to {hs_name} MyChart for account '{account}' (or pick that "
+            f"person if using proxy access). The browser will be sent to {config.REDIRECT_URI}; if it "
+            "warns about the certificate, continue (it's this computer). Then call `login_status`. If "
+            "the final page doesn't load, copy the full address from the browser bar and pass it to "
             "`complete_login`. Only one sign-in can be in progress at a time."
         ),
     }
@@ -187,7 +211,7 @@ def complete_login(redirect_url: str) -> dict:
 
 @mcp.tool(annotations=RO)
 def login_status(account: AccountArg = config.DEFAULT_ACCOUNT) -> dict:
-    """Report whether an account is signed in, whose record it is, and when the session expires."""
+    """Report whether an account is signed in, its health system, whose record it is, and session expiry."""
     account = config.validate_account(account)
     out = _account_status(account)
     pending = auth.pending_result()
@@ -198,7 +222,7 @@ def login_status(account: AccountArg = config.DEFAULT_ACCOUNT) -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
 def logout(account: AccountArg = config.DEFAULT_ACCOUNT) -> dict:
-    """Delete an account's locally stored MyChart tokens (its access log is kept)."""
+    """Delete an account's locally stored MyChart tokens (its health system and access log are kept)."""
     account = config.validate_account(account)
     return {"account": account, "tokens_deleted": auth.clear_tokens(account)}
 
