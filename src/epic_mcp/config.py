@@ -36,9 +36,17 @@ TOKEN_LOCK = DATA_DIR / "tokens.lock"
 ACCESS_LOG = DATA_DIR / "access_log.jsonl"
 CERT_DIR = DATA_DIR / "certs"
 
-# Confidential-client key (private_key_jwt). If this file exists, token requests
-# are signed with it; otherwise the app acts as a public client.
-PRIVATE_KEY = Path(os.environ.get("EPIC_PRIVATE_KEY", DATA_DIR / "jwt-private-key.pem"))
+# Confidential-client keys (private_key_jwt): one for Epic's sandbox ("nonprod"),
+# one for real health systems ("prod"), chosen from the FHIR base URL. If the key
+# file exists, token requests are signed with it; otherwise the app acts as a public client.
+KEY_ENV = os.environ.get("EPIC_KEY_ENV", "nonprod" if FHIR_BASE == SANDBOX_FHIR_BASE else "prod")
+
+
+def private_key_path(env: str) -> Path:
+    return DATA_DIR / f"jwt-private-key-{env}.pem"
+
+
+PRIVATE_KEY = Path(os.environ.get("EPIC_PRIVATE_KEY", private_key_path(KEY_ENV)))
 JWT_ALG = "RS384"  # Epic accepts RS384 / ES384 for client assertions
 
 

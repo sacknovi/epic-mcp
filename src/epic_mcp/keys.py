@@ -12,6 +12,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -31,33 +32,33 @@ def has_private_key() -> bool:
     return config.PRIVATE_KEY.exists()
 
 
-def _load_private_key() -> rsa.RSAPrivateKey:
-    return serialization.load_pem_private_key(config.PRIVATE_KEY.read_bytes(), password=None)  # type: ignore[return-value]
+def _load_private_key(path: Path | None = None) -> rsa.RSAPrivateKey:
+    return serialization.load_pem_private_key((path or config.PRIVATE_KEY).read_bytes(), password=None)  # type: ignore[return-value]
 
 
-def generate_private_key(overwrite: bool = False) -> None:
-    if config.PRIVATE_KEY.exists() and not overwrite:
-        raise FileExistsError(f"{config.PRIVATE_KEY} already exists")
+def generate_private_key(path: Path, overwrite: bool = False) -> None:
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"{path} already exists")
     config.ensure_data_dir()
     key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     pem = key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
     )
-    fd = os.open(config.PRIVATE_KEY, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(pem)
 
 
-def public_jwk() -> dict:
-    pub = _load_private_key().public_key().public_numbers()
+def public_jwk(path: Path | None = None) -> dict:
+    pub = _load_private_key(path).public_key().public_numbers()
     e, n = _int_b64(pub.e), _int_b64(pub.n)
     # RFC 7638 thumbprint as key id
     kid = _b64url(hashlib.sha256(json.dumps({"e": e, "kty": "RSA", "n": n}, separators=(",", ":")).encode()).digest())
     return {"kty": "RSA", "use": "sig", "alg": config.JWT_ALG, "kid": kid, "e": e, "n": n}
 
 
-def jwks() -> dict:
-    return {"keys": [public_jwk()]}
+def jwks(path: Path | None = None) -> dict:
+    return {"keys": [public_jwk(path)]}
 
 
 def client_assertion(client_id: str, token_endpoint: str) -> str:

@@ -18,8 +18,9 @@ def main() -> None:
     m = sub.add_parser("meds", help="Print your medication list")
     m.add_argument("--status", default="active")
     sub.add_parser("log", help="Print the access log")
-    k = sub.add_parser("keygen", help="Create the confidential-client key pair and write the public JWK Set")
-    k.add_argument("--out", default="jwks.json", help="Where to write the public JWK Set (default: jwks.json)")
+    k = sub.add_parser("keygen", help="Create a confidential-client key pair and write its public JWK Set")
+    k.add_argument("--env", choices=["nonprod", "prod"], required=True, help="Sandbox (nonprod) or production key")
+    k.add_argument("--out", help="Where to write the public JWK Set (default: jwks-<env>.json)")
     k.add_argument("--overwrite", action="store_true", help="Replace an existing private key")
     args = parser.parse_args()
 
@@ -55,14 +56,16 @@ def main() -> None:
     elif args.cmd == "keygen":
         from . import keys
 
-        if not keys.has_private_key() or args.overwrite:
-            keys.generate_private_key(overwrite=args.overwrite)
-            print(f"Private key written to {config.PRIVATE_KEY} (keep it secret).")
+        path = config.private_key_path(args.env)
+        out = args.out or f"jwks-{args.env}.json"
+        if not path.exists() or args.overwrite:
+            keys.generate_private_key(path, overwrite=args.overwrite)
+            print(f"Private key written to {path} (keep it secret).")
         else:
-            print(f"Using existing private key {config.PRIVATE_KEY}.")
-        with open(args.out, "w") as f:
-            json.dump(keys.jwks(), f, indent=2)
+            print(f"Using existing private key {path}.")
+        with open(out, "w") as f:
+            json.dump(keys.jwks(path), f, indent=2)
             f.write("\n")
-        print(f"Public JWK Set written to {args.out}. Host it at an https URL and register it with Epic.")
+        print(f"Public JWK Set written to {out}. Host it at an https URL and register it with Epic.")
     elif args.cmd == "log":
         print(json.dumps(server.get_access_log(), indent=2))

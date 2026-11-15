@@ -21,7 +21,7 @@ Epic MCP reads nothing else. All access is **read-only**. Epic MCP cannot change
 3. You approve access. Epic sends a short-lived access token back to Epic MCP at `https://localhost:8765/callback`, which is on your own machine.
 4. Your AI assistant calls Epic MCP's tools, such as `get_medications`. Epic MCP fetches the data from your health system's FHIR API and returns it.
 
-Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE. It authenticates as a confidential client with a signed JWT (`private_key_jwt`, RS384). The private key never leaves your computer, and only the public key is published in [`jwks.json`](jwks.json). Epic issues rolling refresh tokens, so you stay signed in between uses.
+Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE. It authenticates as a confidential client with a signed JWT (`private_key_jwt`, RS384). The private key never leaves your computer, and only the public keys are published: [`jwks-nonprod.json`](jwks-nonprod.json) for Epic's sandbox and [`jwks-prod.json`](jwks-prod.json) for real health systems. Epic issues rolling refresh tokens, so you stay signed in between uses.
 
 ## Setup
 
@@ -58,7 +58,7 @@ uv run epic-mcp logout    # delete stored tokens
 
 ### Your own key pair
 
-If you register your own Epic app, run `uv run epic-mcp keygen --out jwks.json`. This creates `~/.epic-mcp/jwt-private-key.pem` and writes the matching public JWK Set. Host that file at an https URL and enter it as the app's JWK Set URL. Without a private key, Epic MCP acts as a public client, which gets no refresh tokens.
+If you register your own Epic app, run `uv run epic-mcp keygen --env nonprod` and `uv run epic-mcp keygen --env prod`. Each creates a private key in `~/.epic-mcp/` and writes the matching public `jwks-<env>.json`. Host those files at https URLs and enter them as the app's Non-Production and Production JWK Set URLs. Epic MCP uses the nonprod key with the sandbox and the prod key everywhere else; set `EPIC_KEY_ENV` to override. Without a private key, Epic MCP acts as a public client, which gets no refresh tokens.
 
 ### Configuration
 
@@ -70,7 +70,7 @@ By default, Epic MCP connects to Epic's **sandbox**, which has test patients onl
 | `EPIC_CLIENT_ID` | The production client ID |
 | `EPIC_MCP_HOME` | Data folder. The default is `~/.epic-mcp` |
 
-All local data lives in `~/.epic-mcp/`: `tokens.json` (mode 600), `jwt-private-key.pem` (mode 600), `access_log.jsonl` and `certs/`. Delete that folder to remove everything.
+All local data lives in `~/.epic-mcp/`: `tokens.json` (mode 600), `jwt-private-key-nonprod.pem` and `jwt-private-key-prod.pem` (mode 600), `access_log.jsonl` and `certs/`. Delete that folder to remove everything.
 
 The first sign-in uses a self-signed certificate for `https://localhost:8765`, so the browser will warn once. To avoid the warning, put [mkcert](https://github.com/FiloSottile/mkcert) certificates at `~/.epic-mcp/certs/localhost.pem` and `localhost-key.pem`.
 
