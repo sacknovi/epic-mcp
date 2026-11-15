@@ -40,6 +40,11 @@ Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE, running as a public client.
 
 Epic MCP is an independent project. It is not affiliated with, endorsed by or sponsored by Epic Systems Corporation or any health system. "Epic" and "MyChart" are trademarks of Epic Systems Corporation. This tool does not provide medical advice. Always confirm medication details with your care team.
 
+## Terms and privacy
+
+- [Terms of Use](TERMS.md)
+- [Privacy & Data Use Disclosure](PRIVACY.md)
+
 ## License
 
 MIT
