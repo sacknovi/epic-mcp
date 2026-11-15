@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -16,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
 
-from . import config
+from . import config, keys
 
 _smart_config_cache: dict | None = None
 _pending: dict | None = None  # state, verifier, server, result for an in-progress login
@@ -71,15 +73,27 @@ def clear_tokens() -> bool:
 
 
 def _token_request(data: dict) -> dict:
-    r = httpx.post(
-        smart_configuration()["token_endpoint"],
-        data=data,
-        headers={"Accept": "application/json"},
-        timeout=30,
-    )
+    endpoint = smart_configuration()["token_endpoint"]
+    data = dict(data)
+    if keys.has_private_key():
+        data["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        data["client_assertion"] = keys.client_assertion(config.CLIENT_ID, endpoint)
+    r = httpx.post(endpoint, data=data, headers={"Accept": "application/json"}, timeout=30)
     if r.status_code != 200:
         raise AuthError(f"Token request failed ({r.status_code}): {r.text[:500]}")
     return r.json()
+
+
+@contextlib.contextmanager
+def _token_lock():
+    """Cross-process lock so only one process uses a (rolling) refresh token at a time."""
+    config.ensure_data_dir()
+    with open(config.TOKEN_LOCK, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def get_valid_token() -> dict:
@@ -89,20 +103,27 @@ def get_valid_token() -> dict:
         raise AuthError("Not signed in. Use the `login` tool (or run `epic-mcp login`).")
     if time.time() < tok.get("expires_at", 0):
         return tok
-    if tok.get("refresh_token"):
-        new = _token_request(
-            {
-                "grant_type": "refresh_token",
-                "refresh_token": tok["refresh_token"],
-                "client_id": config.CLIENT_ID,
-            }
-        )
-        # Keep patient id / refresh token if the refresh response omits them.
+    with _token_lock():
+        tok = load_tokens() or tok  # another process may have refreshed while we waited
+        if time.time() < tok.get("expires_at", 0):
+            return tok
+        if not tok.get("refresh_token"):
+            raise AuthError("Session expired. Use the `login` tool to sign in to MyChart again.")
+        try:
+            new = _token_request(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": tok["refresh_token"],
+                    "client_id": config.CLIENT_ID,
+                }
+            )
+        except AuthError as e:
+            raise AuthError(f"Could not refresh the session; sign in again with `login`. ({e})") from e
+        # Rolling refresh tokens: Epic returns a new one. Keep the old values only if omitted.
         for k in ("patient", "refresh_token"):
             new.setdefault(k, tok.get(k))
         save_tokens(new)
         return load_tokens()  # type: ignore[return-value]
-    raise AuthError("Session expired. Use the `login` tool to sign in to MyChart again.")
 
 
 # ---------- local HTTPS certificate ----------

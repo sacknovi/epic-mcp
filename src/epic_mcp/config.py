@@ -26,13 +26,20 @@ SCOPES = " ".join(
         "patient/Patient.read",
         "patient/MedicationRequest.read",
         "patient/Practitioner.read",
+        "offline_access",
     ]
 )
 
 DATA_DIR = Path(os.environ.get("EPIC_MCP_HOME", Path.home() / ".epic-mcp"))
 TOKEN_FILE = DATA_DIR / "tokens.json"
+TOKEN_LOCK = DATA_DIR / "tokens.lock"
 ACCESS_LOG = DATA_DIR / "access_log.jsonl"
 CERT_DIR = DATA_DIR / "certs"
+
+# Confidential-client key (private_key_jwt). If this file exists, token requests
+# are signed with it; otherwise the app acts as a public client.
+PRIVATE_KEY = Path(os.environ.get("EPIC_PRIVATE_KEY", DATA_DIR / "jwt-private-key.pem"))
+JWT_ALG = "RS384"  # Epic accepts RS384 / ES384 for client assertions
 
 
 def ensure_data_dir() -> Path:
