@@ -30,11 +30,20 @@ SCOPES = " ".join(
     ]
 )
 
-DATA_DIR = Path(os.environ.get("EPIC_MCP_HOME", Path.home() / ".epic-mcp"))
+# Shared app-level files (keys, localhost certificate) live in BASE_DIR.
+# Per-login files (tokens, access log) live in DATA_DIR, which is a separate
+# folder per profile so different MyChart logins never mix.
+BASE_DIR = Path(os.environ.get("EPIC_MCP_BASE", Path.home() / ".epic-mcp"))
+PROFILE = os.environ.get("EPIC_MCP_PROFILE", "").strip()
+if PROFILE and not PROFILE.replace("-", "").replace("_", "").isalnum():
+    raise ValueError("EPIC_MCP_PROFILE may contain only letters, digits, '-' and '_'")
+DATA_DIR = Path(
+    os.environ.get("EPIC_MCP_HOME", BASE_DIR / "profiles" / PROFILE if PROFILE else BASE_DIR)
+)
 TOKEN_FILE = DATA_DIR / "tokens.json"
 TOKEN_LOCK = DATA_DIR / "tokens.lock"
 ACCESS_LOG = DATA_DIR / "access_log.jsonl"
-CERT_DIR = DATA_DIR / "certs"
+CERT_DIR = BASE_DIR / "certs"
 
 # Confidential-client keys (private_key_jwt): one for Epic's sandbox ("nonprod"),
 # one for real health systems ("prod"), chosen from the FHIR base URL. If the key
@@ -43,7 +52,7 @@ KEY_ENV = os.environ.get("EPIC_KEY_ENV", "nonprod" if FHIR_BASE == SANDBOX_FHIR_
 
 
 def private_key_path(env: str) -> Path:
-    return DATA_DIR / f"jwt-private-key-{env}.pem"
+    return BASE_DIR / f"jwt-private-key-{env}.pem"
 
 
 PRIVATE_KEY = Path(os.environ.get("EPIC_PRIVATE_KEY", private_key_path(KEY_ENV)))
@@ -51,6 +60,7 @@ JWT_ALG = "RS384"  # Epic accepts RS384 / ES384 for client assertions
 
 
 def ensure_data_dir() -> Path:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(DATA_DIR, 0o700)
+    for d in (BASE_DIR, DATA_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
     return DATA_DIR

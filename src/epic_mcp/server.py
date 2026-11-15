@@ -143,10 +143,11 @@ def login_status() -> dict:
     pending = auth.pending_result()
     tok = auth.load_tokens()
     if not tok or tok.get("fhir_base") != config.FHIR_BASE:
-        return {"signed_in": False, "last_attempt": pending[1] if pending else None}
+        return {"signed_in": False, "profile": config.PROFILE or "default", "last_attempt": pending[1] if pending else None}
     remaining = int(tok.get("expires_at", 0) - time.time())
     return {
         "signed_in": remaining > 0 or bool(tok.get("refresh_token")),
+        "profile": config.PROFILE or "default",
         "patient_id": tok.get("patient"),
         "access_expires_in_seconds": max(remaining, 0),
         "can_refresh": bool(tok.get("refresh_token")),

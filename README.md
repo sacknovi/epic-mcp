@@ -38,6 +38,24 @@ claude mcp add --scope user epic-mcp -- uv --directory "$PWD" run epic-mcp
 
 Then ask your assistant something like "What medications am I on?" It will give you a MyChart sign-in link the first time.
 
+### Multiple MyChart logins (profiles)
+
+To keep separate logins, for example yours and a family member's under proxy, give each its own Claude Code folder with a `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "epic-mcp": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/epic-mcp", "run", "epic-mcp"],
+      "env": { "EPIC_MCP_PROFILE": "me" }
+    }
+  }
+}
+```
+
+Each profile keeps its tokens and access log in `~/.epic-mcp/profiles/<name>/`. The app keys and the localhost certificate are shared. On the command line, run `EPIC_MCP_PROFILE=me uv run epic-mcp meds`.
+
 ### Command-line use
 
 ```bash
@@ -68,7 +86,8 @@ By default, Epic MCP connects to Epic's **sandbox**, which has test patients onl
 |---|---|
 | `EPIC_FHIR_BASE` | Your health system's FHIR R4 base URL, from Epic's endpoint directory |
 | `EPIC_CLIENT_ID` | The production client ID |
-| `EPIC_MCP_HOME` | Data folder. The default is `~/.epic-mcp` |
+| `EPIC_MCP_PROFILE` | Profile name for a separate login (tokens and access log) |
+| `EPIC_MCP_BASE` | Base folder for keys, the certificate and profiles. The default is `~/.epic-mcp` |
 
 All local data lives in `~/.epic-mcp/`: `tokens.json` (mode 600), `jwt-private-key-nonprod.pem` and `jwt-private-key-prod.pem` (mode 600), `access_log.jsonl` and `certs/`. Delete that folder to remove everything.
 
