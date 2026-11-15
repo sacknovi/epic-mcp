@@ -7,10 +7,12 @@ from pathlib import Path
 
 # Public (non-secret) client IDs registered on fhir.epic.com.
 SANDBOX_CLIENT_ID = "8a296228-87f1-4f6c-81db-64d69647cd12"
+PRODUCTION_CLIENT_ID = "9de34a71-8ccb-477f-a9d8-c8a4892fb820"
 SANDBOX_FHIR_BASE = "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4"
 
-CLIENT_ID = os.environ.get("EPIC_CLIENT_ID", SANDBOX_CLIENT_ID)
-FHIR_BASE = os.environ.get("EPIC_FHIR_BASE", SANDBOX_FHIR_BASE).rstrip("/")
+FHIR_BASE = (os.environ.get("EPIC_FHIR_BASE") or SANDBOX_FHIR_BASE).rstrip("/")
+IS_SANDBOX = FHIR_BASE == SANDBOX_FHIR_BASE
+CLIENT_ID = os.environ.get("EPIC_CLIENT_ID", SANDBOX_CLIENT_ID if IS_SANDBOX else PRODUCTION_CLIENT_ID)
 
 CALLBACK_HOST = "localhost"
 CALLBACK_PORT = int(os.environ.get("EPIC_CALLBACK_PORT", "8765"))
@@ -70,7 +72,7 @@ def list_account_names() -> list[str]:
 # Confidential-client keys (private_key_jwt): one for Epic's sandbox ("nonprod"),
 # one for real health systems ("prod"), chosen from the FHIR base URL. If the key
 # file exists, token requests are signed with it; otherwise the app acts as a public client.
-KEY_ENV = os.environ.get("EPIC_KEY_ENV", "nonprod" if FHIR_BASE == SANDBOX_FHIR_BASE else "prod")
+KEY_ENV = os.environ.get("EPIC_KEY_ENV", "nonprod" if IS_SANDBOX else "prod")
 
 
 def private_key_path(env: str) -> Path:
