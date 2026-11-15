@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 import ssl
 import threading
@@ -107,6 +108,21 @@ def _token_request(fhir_base: str, data: dict) -> dict:
     if r.status_code != 200:
         raise AuthError(f"Token request failed ({r.status_code}): {r.text[:500]}")
     return r.json()
+
+
+def probe_client(fhir_base: str) -> str | None:
+    """Send a signed token request with a fake code. Returns Epic's error code:
+    "invalid_grant" means the health system knows this client and accepted our key (live);
+    "invalid_client" means the app hasn't reached that health system yet (or the key is wrong)."""
+    try:
+        _token_request(
+            fhir_base,
+            {"grant_type": "authorization_code", "code": "probe", "redirect_uri": config.REDIRECT_URI, "code_verifier": "x" * 50},
+        )
+        return "ok"
+    except AuthError as e:
+        m = re.search(r'"error"\s*:\s*"([^"]+)"', str(e))
+        return m.group(1) if m else str(e)[:200]
 
 
 @contextlib.contextmanager

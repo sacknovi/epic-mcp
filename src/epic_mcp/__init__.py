@@ -15,6 +15,8 @@ def main() -> None:
     sub.add_parser("serve", help="Run the MCP server over stdio (default)")
     lg = sub.add_parser("login", help="Sign in to MyChart from the terminal")
     lg.add_argument("-s", "--health-system", help="Health system name, FHIR base URL, or 'sandbox' (required for a new account)")
+    pr = sub.add_parser("probe", help="Check whether a health system recognizes this app (no sign-in needed)")
+    pr.add_argument("health_system", help="Health system name, FHIR base URL, or 'sandbox'")
     fd = sub.add_parser("find", help="Search Epic's directory for a health system")
     fd.add_argument("query")
     sub.add_parser("logout", help="Delete stored tokens")
@@ -72,6 +74,14 @@ def main() -> None:
         print(json.dumps(server.list_accounts(), indent=2))
     elif args.cmd == "meds":
         print(json.dumps(server.get_medications(acct, args.status), indent=2))
+    elif args.cmd == "probe":
+        from . import directory
+
+        base, hs = directory.resolve(args.health_system)
+        err = auth.probe_client(base)
+        live = err == "invalid_grant"
+        print(json.dumps({"health_system": hs, "fhir_base": base, "response": err, "live": live}, indent=2))
+        sys.exit(0 if live else 2)
     elif args.cmd == "find":
         print(json.dumps(server.find_health_system(args.query), indent=2))
     elif args.cmd == "keygen":
