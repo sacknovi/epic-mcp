@@ -77,6 +77,35 @@ def _simplify_med(mr: dict) -> dict:
     return {k: v for k, v in out.items() if v not in (None, "", False)} | {"status": out["status"]}
 
 
+def _practitioner_summary(p: dict) -> dict:
+    name = next(iter(p.get("name", [])), {})
+    full = name.get("text") or " ".join(
+        name.get("prefix", []) + name.get("given", []) + [name.get("family", "")] + name.get("suffix", [])
+    ).strip()
+    quals = [q for q in (_codeable_text(q.get("code")) for q in p.get("qualification", [])) if q]
+    phones = [t.get("value") for t in p.get("telecom", []) if t.get("system") == "phone" and t.get("value")]
+    out = {"name": full or None, "credentials": ", ".join(quals) or None, "phone": phones[0] if phones else None}
+    return {k: v for k, v in out.items() if v}
+
+
+def _add_prescriber_details(meds: list[dict], simplified: list[dict]) -> None:
+    """Look up each distinct prescriber once. Silently skip if the app lacks Practitioner access."""
+    cache: dict[str, dict | None] = {}
+    for raw, simple in zip(meds, simplified):
+        ref = raw.get("requester", {}).get("reference", "")
+        if not ref.startswith("Practitioner/"):
+            continue
+        pid = ref.split("/", 1)[1]
+        if pid not in cache:
+            try:
+                cache[pid] = _practitioner_summary(fhir.read("Practitioner", pid, tool="get_medications"))
+            except Exception:  # noqa: BLE001  (403 if Practitioner.Read not granted)
+                cache[pid] = None
+        if cache[pid]:
+            simple["prescriber_details"] = cache[pid]
+            simple["prescriber"] = cache[pid].get("name") or simple.get("prescriber")
+
+
 # ---------- auth tools ----------
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
@@ -146,6 +175,7 @@ def get_medications(
         params["status"] = status
     meds = fhir.search("MedicationRequest", params, tool="get_medications")
     simplified = [_simplify_med(m) for m in meds]
+    _add_prescriber_details(meds, simplified)
     simplified.sort(key=lambda m: m.get("prescribed_on") or "", reverse=True)
     return {
         "count": len(simplified),

@@ -25,6 +25,7 @@ SCOPES = " ".join(
         "launch/patient",
         "patient/Patient.read",
         "patient/MedicationRequest.read",
+        "patient/Practitioner.read",
     ]
 )
 

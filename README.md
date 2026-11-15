@@ -9,6 +9,7 @@ Epic MCP is a local, open-source [Model Context Protocol](https://modelcontextpr
 After you sign in with your own MyChart account, Epic MCP can read:
 
 - **Your medications:** current and past medication orders, including ones recorded by other organizations.
+- **Your prescribers:** the name and credentials of the clinician who ordered each medication.
 - **Your basic demographics:** used only to identify your patient record.
 
 Epic MCP reads nothing else. All access is **read-only**. Epic MCP cannot change anything in your medical record, send messages or schedule appointments.
@@ -82,6 +83,7 @@ The first sign-in uses a self-signed certificate for `https://localhost:8765`, s
 |---|---|
 | Patient | Identify your record |
 | MedicationRequest | Medication list (signed orders and outside records) |
+| Practitioner | Prescriber name and credentials |
 
 ## Disclaimer
 

@@ -4,7 +4,7 @@ _Last updated: November 15, 2026_
 
 | Question | Answer |
 |---|---|
-| What data is accessed? | Your medication list (FHIR MedicationRequest) and basic demographics (FHIR Patient), used to identify your record. Nothing else. |
+| What data is accessed? | Your medication list (FHIR MedicationRequest), the prescribing clinician's name and credentials (FHIR Practitioner), and basic demographics (FHIR Patient), used to identify your record. Nothing else. |
 | Is access read-only? | Yes. |
 | Where is data stored? | Only on your own computer. There is no developer-operated server or cloud storage. |
 | Does the developer receive my data? | No. |

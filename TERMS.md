@@ -5,7 +5,7 @@ _Last updated: November 15, 2026_
 By authorizing Epic MCP to access your health records, you agree to these terms.
 
 ## 1. What Epic MCP is
-Epic MCP is free, open-source software that you run on your own computer. With your permission, it reads your medication list and basic demographics from your health system's patient portal (MyChart) through standard FHIR APIs. It then makes that information available to an AI assistant that you choose to connect it to.
+Epic MCP is free, open-source software that you run on your own computer. With your permission, it reads your medication list, the prescribers of those medications, and basic demographics from your health system's patient portal (MyChart) through standard FHIR APIs. It then makes that information available to an AI assistant that you choose to connect it to.
 
 ## 2. Your data
 - Epic MCP has **read-only** access. It cannot change your medical record.
