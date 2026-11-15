@@ -39,7 +39,7 @@ def _load_private_key(path: Path | None = None) -> rsa.RSAPrivateKey:
 def generate_private_key(path: Path, overwrite: bool = False) -> None:
     if path.exists() and not overwrite:
         raise FileExistsError(f"{path} already exists")
-    config.ensure_data_dir()
+    config.ensure_base_dir()
     key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     pem = key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()

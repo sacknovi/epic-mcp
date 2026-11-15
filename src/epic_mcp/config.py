@@ -31,19 +31,41 @@ SCOPES = " ".join(
 )
 
 # Shared app-level files (keys, localhost certificate) live in BASE_DIR.
-# Per-login files (tokens, access log) live in DATA_DIR, which is a separate
-# folder per profile so different MyChart logins never mix.
+# Each MyChart account has its own folder (tokens, access log) under BASE_DIR/profiles/<account>,
+# so different logins never mix.
 BASE_DIR = Path(os.environ.get("EPIC_MCP_BASE", Path.home() / ".epic-mcp"))
-PROFILE = os.environ.get("EPIC_MCP_PROFILE", "").strip()
-if PROFILE and not PROFILE.replace("-", "").replace("_", "").isalnum():
-    raise ValueError("EPIC_MCP_PROFILE may contain only letters, digits, '-' and '_'")
-DATA_DIR = Path(
-    os.environ.get("EPIC_MCP_HOME", BASE_DIR / "profiles" / PROFILE if PROFILE else BASE_DIR)
-)
-TOKEN_FILE = DATA_DIR / "tokens.json"
-TOKEN_LOCK = DATA_DIR / "tokens.lock"
-ACCESS_LOG = DATA_DIR / "access_log.jsonl"
+PROFILES_DIR = BASE_DIR / "profiles"
 CERT_DIR = BASE_DIR / "certs"
+DEFAULT_ACCOUNT = os.environ.get("EPIC_MCP_ACCOUNT", "me")
+
+
+def validate_account(name: str) -> str:
+    name = (name or "").strip().lower()
+    if not name or len(name) > 40 or not name.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("Account names may contain only letters, digits, '-' and '_' (max 40 chars).")
+    return name
+
+
+def account_dir(account: str) -> Path:
+    return PROFILES_DIR / validate_account(account)
+
+
+def token_file(account: str) -> Path:
+    return account_dir(account) / "tokens.json"
+
+
+def token_lock(account: str) -> Path:
+    return account_dir(account) / "tokens.lock"
+
+
+def access_log(account: str) -> Path:
+    return account_dir(account) / "access_log.jsonl"
+
+
+def list_account_names() -> list[str]:
+    if not PROFILES_DIR.exists():
+        return []
+    return sorted(d.name for d in PROFILES_DIR.iterdir() if d.is_dir())
 
 # Confidential-client keys (private_key_jwt): one for Epic's sandbox ("nonprod"),
 # one for real health systems ("prod"), chosen from the FHIR base URL. If the key
@@ -59,8 +81,16 @@ PRIVATE_KEY = Path(os.environ.get("EPIC_PRIVATE_KEY", private_key_path(KEY_ENV))
 JWT_ALG = "RS384"  # Epic accepts RS384 / ES384 for client assertions
 
 
-def ensure_data_dir() -> Path:
-    for d in (BASE_DIR, DATA_DIR):
-        d.mkdir(parents=True, exist_ok=True)
-        os.chmod(d, 0o700)
-    return DATA_DIR
+def ensure_base_dir() -> Path:
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(BASE_DIR, 0o700)
+    return BASE_DIR
+
+
+def ensure_account_dir(account: str) -> Path:
+    ensure_base_dir()
+    d = account_dir(account)
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(PROFILES_DIR, 0o700)
+    os.chmod(d, 0o700)
+    return d

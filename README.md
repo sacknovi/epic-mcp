@@ -38,38 +38,35 @@ claude mcp add --scope user epic-mcp -- uv --directory "$PWD" run epic-mcp
 
 Then ask your assistant something like "What medications am I on?" It will give you a MyChart sign-in link the first time.
 
-### Multiple MyChart logins (profiles)
+### Multiple MyChart accounts
 
-To keep separate logins, for example yours and a family member's under proxy, give each its own Claude Code folder with a `.mcp.json`:
+One Epic MCP server can hold several MyChart sign-ins, for example yours and a family member's. Every tool takes an `account` argument (the default is `me`), and every result names the account and the patient. Just ask:
 
-```json
-{
-  "mcpServers": {
-    "epic-mcp": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/epic-mcp", "run", "epic-mcp"],
-      "env": { "EPIC_MCP_PROFILE": "me" }
-    }
-  }
-}
-```
+- "Sign in to Mom's MyChart." This calls `login(account="mom")`.
+- "Compare my meds with Mom's."
+- "Which accounts are set up?" This calls `list_accounts`.
 
-Each profile keeps its tokens and access log in `~/.epic-mcp/profiles/<name>/`. The app keys and the localhost certificate are shared. On the command line, run `EPIC_MCP_PROFILE=me uv run epic-mcp meds`.
+With MyChart **proxy access**, sign in as yourself and choose the other person at the patient-selection step. That becomes its own account, using your own credentials.
+
+Each account keeps its tokens and access log in `~/.epic-mcp/profiles/<account>/`. The app keys and the localhost certificate are shared. Only one sign-in can be in progress at a time.
 
 ### Command-line use
 
 ```bash
-uv run epic-mcp login     # sign in to MyChart
-uv run epic-mcp meds      # print active medications (--status all for history)
-uv run epic-mcp log       # show the access log
-uv run epic-mcp logout    # delete stored tokens
+uv run epic-mcp login             # sign in to MyChart (account "me")
+uv run epic-mcp -a mom login      # sign in a second account
+uv run epic-mcp accounts          # list accounts and sign-in status
+uv run epic-mcp -a mom meds       # print active medications (--status all for history)
+uv run epic-mcp -a mom log        # show that account's access log
+uv run epic-mcp -a mom logout     # delete that account's tokens
 ```
 
 ### Tools
 
 | Tool | What it does |
 |---|---|
-| `login` / `complete_login` / `login_status` / `logout` | Manage MyChart sign-in |
+| `list_accounts` | Accounts, whose record each is, and sign-in status |
+| `login` / `complete_login` / `login_status` / `logout` | Manage MyChart sign-in per account |
 | `get_medications` | Medication list. Filter by `active` (default), `all`, `completed`, `stopped`, and so on |
 | `get_patient` | Name and birth date, to confirm whose record it is |
 | `get_access_log` | Every data fetch Epic MCP has made |
@@ -86,10 +83,10 @@ By default, Epic MCP connects to Epic's **sandbox**, which has test patients onl
 |---|---|
 | `EPIC_FHIR_BASE` | Your health system's FHIR R4 base URL, from Epic's endpoint directory |
 | `EPIC_CLIENT_ID` | The production client ID |
-| `EPIC_MCP_PROFILE` | Profile name for a separate login (tokens and access log) |
+| `EPIC_MCP_ACCOUNT` | Default account name. The default is `me` |
 | `EPIC_MCP_BASE` | Base folder for keys, the certificate and profiles. The default is `~/.epic-mcp` |
 
-All local data lives in `~/.epic-mcp/`: `tokens.json` (mode 600), `jwt-private-key-nonprod.pem` and `jwt-private-key-prod.pem` (mode 600), `access_log.jsonl` and `certs/`. Delete that folder to remove everything.
+All local data lives in `~/.epic-mcp/`: `jwt-private-key-nonprod.pem` and `jwt-private-key-prod.pem` (mode 600), `certs/`, and `profiles/<account>/` with each account's `tokens.json` (mode 600) and `access_log.jsonl`. Delete that folder to remove everything.
 
 The first sign-in uses a self-signed certificate for `https://localhost:8765`, so the browser will warn once. To avoid the warning, put [mkcert](https://github.com/FiloSottile/mkcert) certificates at `~/.epic-mcp/certs/localhost.pem` and `localhost-key.pem`.
 

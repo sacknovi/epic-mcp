@@ -10,10 +10,11 @@ import httpx
 from . import auth, config
 
 
-def log_access(tool: str, resource: str, url: str, status: int | str, count: int | None = None) -> None:
-    config.ensure_data_dir()
+def log_access(account: str, tool: str, resource: str, url: str, status: int | str, count: int | None = None) -> None:
+    config.ensure_account_dir(account)
     entry = {
         "time": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "account": account,
         "accessed_by": "Epic MCP",
         "tool": tool,
         "resource": resource,
@@ -21,20 +22,20 @@ def log_access(tool: str, resource: str, url: str, status: int | str, count: int
         "status": status,
         "records": count,
     }
-    with open(config.ACCESS_LOG, "a") as f:
+    with open(config.access_log(account), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
 
-def read_access_log(limit: int = 50) -> list[dict]:
+def read_access_log(account: str, limit: int = 50) -> list[dict]:
     try:
-        lines = config.ACCESS_LOG.read_text().splitlines()
+        lines = config.access_log(account).read_text().splitlines()
     except FileNotFoundError:
         return []
     return [json.loads(l) for l in lines[-limit:] if l.strip()]
 
 
-def _get(url: str, params: dict | None, tool: str, resource: str) -> dict:
-    tok = auth.get_valid_token()
+def _get(account: str, url: str, params: dict | None, tool: str, resource: str) -> dict:
+    tok = auth.get_valid_token(account)
     r = httpx.get(
         url,
         params=params,
@@ -43,27 +44,32 @@ def _get(url: str, params: dict | None, tool: str, resource: str) -> dict:
     )
     full_url = str(r.request.url)
     if r.status_code != 200:
-        log_access(tool, resource, full_url, r.status_code)
+        log_access(account, tool, resource, full_url, r.status_code)
         raise RuntimeError(f"FHIR {resource} request failed ({r.status_code}): {r.text[:500]}")
     data = r.json()
     count = len(data.get("entry", [])) if data.get("resourceType") == "Bundle" else 1
-    log_access(tool, resource, full_url, 200, count)
+    log_access(account, tool, resource, full_url, 200, count)
     return data
 
 
-def patient_id() -> str:
-    pid = auth.get_valid_token().get("patient")
+def patient_display_name(p: dict) -> str | None:
+    name = next(iter(p.get("name", [])), {})
+    return name.get("text") or " ".join(name.get("given", []) + [name.get("family", "")]).strip() or None
+
+
+def patient_id(account: str) -> str:
+    pid = auth.get_valid_token(account).get("patient")
     if not pid:
         raise auth.AuthError("The sign-in did not return a patient. Sign in again and pick a patient.")
     return pid
 
 
-def search(resource: str, params: dict, tool: str, max_pages: int = 10) -> list[dict]:
+def search(account: str, resource: str, params: dict, tool: str, max_pages: int = 10) -> list[dict]:
     """Search and follow `next` links. Returns resources of the requested type only."""
     out: list[dict] = []
     url, p = f"{config.FHIR_BASE}/{resource}", params
     for _ in range(max_pages):
-        bundle = _get(url, p, tool, resource)
+        bundle = _get(account, url, p, tool, resource)
         for e in bundle.get("entry", []):
             res = e.get("resource", {})
             if res.get("resourceType") == resource:
@@ -75,5 +81,5 @@ def search(resource: str, params: dict, tool: str, max_pages: int = 10) -> list[
     return out
 
 
-def read(resource: str, rid: str, tool: str) -> dict:
-    return _get(f"{config.FHIR_BASE}/{resource}/{rid}", None, tool, resource)
+def read(account: str, resource: str, rid: str, tool: str) -> dict:
+    return _get(account, f"{config.FHIR_BASE}/{resource}/{rid}", None, tool, resource)

@@ -1,4 +1,4 @@
-"""SMART on FHIR standalone patient login (public client + PKCE) with local token storage."""
+"""SMART on FHIR standalone patient login (PKCE, optional private_key_jwt) with per-account token storage."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import httpx
 from . import config, keys
 
 _smart_config_cache: dict | None = None
-_pending: dict | None = None  # state, verifier, server, result for an in-progress login
+_pending: dict | None = None  # account, state, verifier, server, result for the in-progress login
 _lock = threading.Lock()
 
 
@@ -46,27 +46,39 @@ def smart_configuration() -> dict:
 
 # ---------- token storage ----------
 
-def load_tokens() -> dict | None:
+def load_tokens(account: str) -> dict | None:
     try:
-        return json.loads(config.TOKEN_FILE.read_text())
+        return json.loads(config.token_file(account).read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
 
-def save_tokens(tok: dict) -> None:
-    config.ensure_data_dir()
+def save_tokens(account: str, tok: dict, keep: dict | None = None) -> None:
+    """Write tokens. `keep` carries fields (e.g. patient_name) from the previous file."""
+    config.ensure_account_dir(account)
     tok = dict(tok)
+    for k, v in (keep or {}).items():
+        tok.setdefault(k, v)
     tok["expires_at"] = time.time() + int(tok.get("expires_in", 3600)) - 60
     tok["fhir_base"] = config.FHIR_BASE
     tok["client_id"] = config.CLIENT_ID
-    fd = os.open(config.TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(config.token_file(account), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(tok, f, indent=2)
 
 
-def clear_tokens() -> bool:
+def update_token_fields(account: str, **fields) -> None:
+    tok = load_tokens(account)
+    if tok:
+        tok.update(fields)
+        fd = os.open(config.token_file(account), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(tok, f, indent=2)
+
+
+def clear_tokens(account: str) -> bool:
     try:
-        config.TOKEN_FILE.unlink()
+        config.token_file(account).unlink()
         return True
     except FileNotFoundError:
         return False
@@ -85,10 +97,10 @@ def _token_request(data: dict) -> dict:
 
 
 @contextlib.contextmanager
-def _token_lock():
-    """Cross-process lock so only one process uses a (rolling) refresh token at a time."""
-    config.ensure_data_dir()
-    with open(config.TOKEN_LOCK, "w") as f:
+def _token_lock(account: str):
+    """Cross-process lock so only one process uses an account's (rolling) refresh token at a time."""
+    config.ensure_account_dir(account)
+    with open(config.token_lock(account), "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             yield
@@ -96,19 +108,19 @@ def _token_lock():
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def get_valid_token() -> dict:
+def get_valid_token(account: str) -> dict:
     """Return stored tokens, refreshing if possible. Raise AuthError if sign-in is needed."""
-    tok = load_tokens()
+    tok = load_tokens(account)
     if not tok or tok.get("fhir_base") != config.FHIR_BASE:
-        raise AuthError("Not signed in. Use the `login` tool (or run `epic-mcp login`).")
+        raise AuthError(f"Account '{account}' is not signed in. Use `login` with account='{account}'.")
     if time.time() < tok.get("expires_at", 0):
         return tok
-    with _token_lock():
-        tok = load_tokens() or tok  # another process may have refreshed while we waited
+    with _token_lock(account):
+        tok = load_tokens(account) or tok  # another process may have refreshed while we waited
         if time.time() < tok.get("expires_at", 0):
             return tok
         if not tok.get("refresh_token"):
-            raise AuthError("Session expired. Use the `login` tool to sign in to MyChart again.")
+            raise AuthError(f"Session for '{account}' expired. Use `login` with account='{account}'.")
         try:
             new = _token_request(
                 {
@@ -120,17 +132,16 @@ def get_valid_token() -> dict:
         except AuthError as e:
             raise AuthError(f"Could not refresh the session; sign in again with `login`. ({e})") from e
         # Rolling refresh tokens: Epic returns a new one. Keep the old values only if omitted.
-        for k in ("patient", "refresh_token"):
-            new.setdefault(k, tok.get(k))
-        save_tokens(new)
-        return load_tokens()  # type: ignore[return-value]
+        keep = {k: tok[k] for k in ("patient", "refresh_token", "patient_name") if tok.get(k)}
+        save_tokens(account, new, keep)
+        return load_tokens(account)  # type: ignore[return-value]
 
 
 # ---------- local HTTPS certificate ----------
 
 def _ensure_cert() -> tuple[str, str]:
     """Use mkcert-style certs if present in CERT_DIR, else create a self-signed one."""
-    config.ensure_data_dir()
+    config.ensure_base_dir()
     config.CERT_DIR.mkdir(exist_ok=True)
     cert = config.CERT_DIR / "localhost.pem"
     key = config.CERT_DIR / "localhost-key.pem"
@@ -197,8 +208,17 @@ def _exchange_code(code: str, state: str) -> dict:
             "code_verifier": p["verifier"],
         }
     )
-    save_tokens(tok)
-    return tok
+    account = p["account"]
+    save_tokens(account, tok)
+    # Record whose chart this is, so every result can be labeled with the patient's name.
+    try:
+        from . import fhir
+
+        pt = fhir.read(account, "Patient", tok["patient"], tool="login")
+        update_token_fields(account, patient_name=fhir.patient_display_name(pt))
+    except Exception:  # noqa: BLE001
+        pass
+    return load_tokens(account) or tok
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -216,8 +236,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         try:
             if "error" in q:
                 raise AuthError(f"{q['error'][0]}: {q.get('error_description', [''])[0]}")
-            _exchange_code(q["code"][0], q.get("state", [""])[0])
-            ok, msg = True, "Signed in. You can close this tab and return to your assistant."
+            tok = _exchange_code(q["code"][0], q.get("state", [""])[0])
+            who = tok.get("patient_name") or "the patient"
+            ok, msg = True, f"Signed in to {who}'s record. You can close this tab and return to your assistant."
         except Exception as e:  # noqa: BLE001
             msg = f"Sign-in failed: {e}"
         with _lock:
@@ -231,8 +252,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
-def start_login() -> str:
-    """Begin a login: start the local HTTPS callback listener and return the MyChart sign-in URL."""
+def start_login(account: str) -> str:
+    """Begin a login for `account`: start the local HTTPS callback listener and return the sign-in URL."""
+    account = config.validate_account(account)
     global _pending
     sc = smart_configuration()
     verifier, challenge = _pkce()
@@ -245,7 +267,7 @@ def start_login() -> str:
                 _pending["server"].server_close()
             except Exception:  # noqa: BLE001
                 pass
-        _pending = {"state": state, "verifier": verifier, "server": None, "result": None}
+        _pending = {"account": account, "state": state, "verifier": verifier, "server": None, "result": None}
 
     try:
         cert, key = _ensure_cert()
@@ -289,6 +311,11 @@ def complete_login_from_url(redirect_url: str) -> dict:
 def pending_result() -> tuple[bool, str] | None:
     with _lock:
         return _pending.get("result") if _pending else None
+
+
+def pending_account() -> str | None:
+    with _lock:
+        return _pending.get("account") if _pending else None
 
 
 def wait_for_login(timeout: float = 300) -> tuple[bool, str]:
