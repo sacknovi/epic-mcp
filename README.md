@@ -9,17 +9,16 @@ Epic MCP is a local, open-source [Model Context Protocol](https://modelcontextpr
 After you sign in with your own MyChart account, Epic MCP can read:
 
 - **Your medications:** current and past medication orders, including ones recorded by other organizations.
-- **Your appointments:** upcoming and past visits, with the provider, location and contact details.
 - **Your basic demographics:** used only to identify your patient record.
 
-All access is **read-only**. Epic MCP cannot change anything in your medical record, send messages or schedule appointments.
+Epic MCP reads nothing else. All access is **read-only**. Epic MCP cannot change anything in your medical record, send messages or schedule appointments.
 
 ## How it works
 
 1. You run Epic MCP on your own computer.
 2. It opens your browser to your health system's MyChart login page. Epic MCP never sees your MyChart password.
 3. You approve access. Epic sends a short-lived access token back to Epic MCP at `https://localhost:8765/callback`, which is on your own machine.
-4. Your AI assistant calls Epic MCP's tools, such as `get_medications` and `get_appointments`. Epic MCP fetches the data from your health system's FHIR API and returns it.
+4. Your AI assistant calls Epic MCP's tools, such as `get_medications`. Epic MCP fetches the data from your health system's FHIR API and returns it.
 
 Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE, running as a public client.
 
@@ -35,10 +34,7 @@ Epic MCP uses OAuth 2.0 with SMART on FHIR and PKCE, running as a public client.
 | Resource | Purpose |
 |---|---|
 | Patient | Identify your record |
-| MedicationRequest | Medication list |
-| Appointment | Upcoming and past appointments |
-| Practitioner / PractitionerRole | Provider name, specialty and phone number |
-| Location / Organization | Clinic address and phone number |
+| MedicationRequest | Medication list (signed orders and outside records) |
 
 ## Disclaimer
 
