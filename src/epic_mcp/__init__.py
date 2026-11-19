@@ -63,7 +63,7 @@ def main() -> None:
                     print(f"Error: {e}")
 
         threading.Thread(target=read_paste, daemon=True).start()
-        ok, msg = auth.wait_for_login()
+        ok, msg = auth.wait_for_login(timeout=1800)
         print(("✓ " if ok else "✗ ") + msg)
         sys.exit(0 if ok else 1)
     elif args.cmd == "logout":
