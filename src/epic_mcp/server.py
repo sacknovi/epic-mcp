@@ -193,17 +193,18 @@ def login(account: AccountArg = config.DEFAULT_ACCOUNT, health_system: str | Non
         "browser_opened": opened,
         "next_steps": (
             f"Open the link and sign in to {hs_name} MyChart for account '{account}' (or pick that "
-            f"person if using proxy access). The browser will be sent to {config.REDIRECT_URI}; if it "
-            "warns about the certificate, continue (it's this computer). Then call `login_status`. If "
-            "the final page doesn't load, copy the full address from the browser bar and pass it to "
-            "`complete_login`. Only one sign-in can be in progress at a time."
+            f"person if using proxy access). Afterwards the browser returns to this computer "
+            f"({config.LOCAL_REDIRECT_URI}); if it warns about the certificate, continue (it's this "
+            "computer). Then call `login_status`. On a phone or other device, the final page offers a "
+            "'Copy sign-in link' button: pass that link to `complete_login`. Only one sign-in can be "
+            "in progress at a time."
         ),
     }
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
 def complete_login(redirect_url: str) -> dict:
-    """Finish the in-progress sign-in by passing the full URL the browser ended on (https://localhost:.../callback?code=...)."""
+    """Finish the in-progress sign-in by passing the sign-in link from the final page (https://localhost:.../callback?code=... or the relay page URL)."""
     account = auth.pending_account()
     auth.complete_login_from_url(redirect_url)
     return {"signed_in": True, **_label(account)}  # type: ignore[arg-type]

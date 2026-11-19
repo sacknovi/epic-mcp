@@ -19,7 +19,14 @@ BRANDS_DIRECTORY_URL = "https://open.epic.com/Endpoints/Brands"
 
 CALLBACK_HOST = "localhost"
 CALLBACK_PORT = int(os.environ.get("EPIC_CALLBACK_PORT", "8765"))
-REDIRECT_URI = f"https://{CALLBACK_HOST}:{CALLBACK_PORT}/callback"
+LOCAL_REDIRECT_URI = f"https://{CALLBACK_HOST}:{CALLBACK_PORT}/callback"
+# Some health systems' firewalls reject any request mentioning localhost, so by default MyChart
+# redirects to a static relay page (docs/callback.html on GitHub Pages) that forwards the browser
+# to the local callback above, or lets the user copy the link on a phone. Set EPIC_REDIRECT=local
+# to have MyChart redirect straight to localhost instead. Both URIs are registered with Epic.
+RELAY_REDIRECT_URI = os.environ.get("EPIC_RELAY_URI", "https://sacknovi.github.io/epic-mcp/callback")
+REDIRECT_MODE = os.environ.get("EPIC_REDIRECT", "relay").strip().lower()
+REDIRECT_URI = LOCAL_REDIRECT_URI if REDIRECT_MODE == "local" else RELAY_REDIRECT_URI
 
 # SMART v1 scopes. Epic grants access based on the app registration, but the
 # request should still list what the app needs.
