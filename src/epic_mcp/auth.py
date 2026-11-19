@@ -107,22 +107,46 @@ def _token_request(fhir_base: str, data: dict) -> dict:
     r = httpx.post(endpoint, data=data, headers={"Accept": "application/json"}, timeout=30)
     if r.status_code != 200:
         raise AuthError(f"Token request failed ({r.status_code}): {r.text[:500]}")
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        blocked = "Request Rejected" in r.text
+        raise AuthError(
+            "The health system's firewall rejected the request (Request Rejected)."
+            if blocked
+            else f"Token endpoint returned a non-JSON response: {r.text[:200]}"
+        ) from None
 
 
-def probe_client(fhir_base: str) -> str | None:
-    """Send a signed token request with a fake code. Returns Epic's error code:
-    "invalid_grant" means the health system knows this client and accepted our key (live);
-    "invalid_client" means the app hasn't reached that health system yet (or the key is wrong)."""
+def _probe_with(fhir_base: str, redirect_uri: str) -> str:
     try:
         _token_request(
             fhir_base,
-            {"grant_type": "authorization_code", "code": "probe", "redirect_uri": config.REDIRECT_URI, "code_verifier": "x" * 50},
+            {"grant_type": "authorization_code", "code": "probe", "redirect_uri": redirect_uri, "code_verifier": "x" * 50},
         )
         return "ok"
     except AuthError as e:
+        if "Request Rejected" in str(e):
+            return "blocked_by_firewall"
         m = re.search(r'"error"\s*:\s*"([^"]+)"', str(e))
         return m.group(1) if m else str(e)[:200]
+    except ValueError:  # non-JSON body (e.g. a firewall's HTML page with status 200)
+        return "blocked_by_firewall"
+
+
+def probe_client(fhir_base: str) -> dict:
+    """Send signed token requests with a fake code, once per registered redirect URI.
+
+    Per redirect URI, Epic answers "invalid_grant" when it knows this client, accepts our key and
+    the redirect URI (live), or "invalid_client" when the app hasn't reached that health system yet
+    or the redirect URI isn't registered there. Returns {"live": bool, "relay": ..., "local": ...}.
+    """
+    results = {
+        "relay": _probe_with(fhir_base, config.RELAY_REDIRECT_URI),
+        "local": _probe_with(fhir_base, config.LOCAL_REDIRECT_URI),
+    }
+    results["live"] = "invalid_grant" in (results["relay"], results["local"])
+    return results
 
 
 @contextlib.contextmanager

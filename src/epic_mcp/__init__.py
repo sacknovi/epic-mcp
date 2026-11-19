@@ -78,9 +78,11 @@ def main() -> None:
         from . import directory
 
         base, hs = directory.resolve(args.health_system)
-        err = auth.probe_client(base)
-        live = err == "invalid_grant"
-        print(json.dumps({"health_system": hs, "fhir_base": base, "response": err, "live": live}, indent=2))
+        res = auth.probe_client(base)
+        live = res["live"]
+        response = "invalid_grant" if live else res["relay"]
+        print(json.dumps({"health_system": hs, "fhir_base": base, "response": response, "live": live,
+                          "relay_redirect": res["relay"], "local_redirect": res["local"]}, indent=2))
         sys.exit(0 if live else 2)
     elif args.cmd == "find":
         print(json.dumps(server.find_health_system(args.query), indent=2))
