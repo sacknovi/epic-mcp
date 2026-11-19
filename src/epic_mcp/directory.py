@@ -1,4 +1,4 @@
-"""Look up health systems in Epic's public FHIR R4 endpoint directory."""
+"""Look up health systems in Epic's public directories (R4 endpoints + brands)."""
 
 from __future__ import annotations
 
@@ -21,13 +21,14 @@ def _load() -> list[dict]:
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     try:
-        r = httpx.get(config.ENDPOINT_DIRECTORY_URL, headers={"Accept": "application/json"}, timeout=60)
-        r.raise_for_status()
-        entries = []
-        for e in r.json().get("entry", []):
-            res = e.get("resource", {})
-            if res.get("name") and res.get("address"):
-                entries.append({"name": res["name"], "fhir_base": config.normalize_base(res["address"])})
+        entries = _download_endpoints() + _download_brands()
+        seen, unique = set(), []
+        for e in entries:
+            key = (e["name"].lower(), e["fhir_base"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(e)
+        entries = unique
         config.ensure_base_dir()
         path.write_text(json.dumps(entries))
         return entries
@@ -36,6 +37,45 @@ def _load() -> list[dict]:
             return json.loads(path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
             raise RuntimeError("Could not download Epic's endpoint directory.") from None
+
+
+def _download_endpoints() -> list[dict]:
+    r = httpx.get(config.ENDPOINT_DIRECTORY_URL, headers={"Accept": "application/json"}, timeout=60)
+    r.raise_for_status()
+    out = []
+    for e in r.json().get("entry", []):
+        res = e.get("resource", {})
+        if res.get("name") and res.get("address"):
+            out.append({"name": res["name"], "fhir_base": config.normalize_base(res["address"])})
+    return out
+
+
+def _download_brands() -> list[dict]:
+    """Brand organizations (with an endpoint reference) -> their endpoint's FHIR base.
+
+    The brands bundle is large (~100 MB), so failures here are tolerated: the R4 list still works.
+    """
+    try:
+        r = httpx.get(config.BRANDS_DIRECTORY_URL, headers={"Accept": "application/json"}, timeout=300)
+        r.raise_for_status()
+        entries = r.json().get("entry", [])
+    except Exception:  # noqa: BLE001
+        return []
+    endpoints = {}
+    for e in entries:
+        res = e.get("resource", {})
+        if res.get("resourceType") == "Endpoint" and res.get("address") and e.get("fullUrl"):
+            endpoints[e["fullUrl"]] = config.normalize_base(res["address"])
+    out = []
+    for e in entries:
+        res = e.get("resource", {})
+        if res.get("resourceType") != "Organization" or not res.get("name"):
+            continue
+        for ref in res.get("endpoint") or []:
+            base = endpoints.get(ref.get("reference", ""))
+            if base:
+                out.append({"name": res["name"], "fhir_base": base})
+    return out
 
 
 def search(query: str, limit: int = 15) -> list[dict]:

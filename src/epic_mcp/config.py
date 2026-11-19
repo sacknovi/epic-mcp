@@ -12,8 +12,10 @@ PRODUCTION_CLIENT_ID = "9de34a71-8ccb-477f-a9d8-c8a4892fb820"
 SANDBOX_FHIR_BASE = "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4"
 SANDBOX_NAME = "Epic Sandbox (test patients)"
 
-# Epic's public directory of patient-access FHIR R4 endpoints.
+# Epic's public directories: patient-access FHIR R4 endpoints, and the larger "brands"
+# bundle that maps patient-facing organization names (e.g. "Northwell Health") to endpoints.
 ENDPOINT_DIRECTORY_URL = "https://open.epic.com/Endpoints/R4"
+BRANDS_DIRECTORY_URL = "https://open.epic.com/Endpoints/Brands"
 
 CALLBACK_HOST = "localhost"
 CALLBACK_PORT = int(os.environ.get("EPIC_CALLBACK_PORT", "8765"))
@@ -21,7 +23,7 @@ REDIRECT_URI = f"https://{CALLBACK_HOST}:{CALLBACK_PORT}/callback"
 
 # SMART v1 scopes. Epic grants access based on the app registration, but the
 # request should still list what the app needs.
-SCOPES = " ".join(
+_DEFAULT_SCOPES = " ".join(
     [
         "openid",
         "fhirUser",
@@ -32,6 +34,8 @@ SCOPES = " ".join(
         "offline_access",
     ]
 )
+# EPIC_SCOPES overrides the requested scopes (for troubleshooting a health system's sign-in).
+SCOPES = os.environ.get("EPIC_SCOPES") or _DEFAULT_SCOPES
 
 JWT_ALG = "RS384"  # Epic accepts RS384 / ES384 for client assertions
 
